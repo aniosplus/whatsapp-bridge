@@ -20,6 +20,17 @@ app.get('/', (req, res) => {
     res.json({ status: 'running', service: 'WhatsApp Bridge', webhook_url: process.env.WEBHOOK_URL });
 });
 
+// Oturum Sıfırlama (Eğer takılırsa)
+app.get('/reset', (req, res) => {
+    const sessionDir = path.join(__dirname, 'auth_info_baileys');
+    if (fs.existsSync(sessionDir)) {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        res.json({ status: 'success', message: 'Session deleted. Restart the service on Render.' });
+    } else {
+        res.json({ status: 'error', message: 'No session found.' });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 const PHP_API_URL = process.env.WEBHOOK_URL || 'https://hugx.net/api/whatsapp_webhook.php';
 const SESSION_NAME = 'whatsapp_auth_session';
@@ -33,24 +44,36 @@ async function connectToWhatsApp() {
         printQRInTerminal: true,
         auth: {
             creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'info' })),
         },
-        logger: pino({ level: 'silent' }),
+        logger: pino({ level: 'info' }),
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000
     });
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
+
         if (qr) {
-            console.log('Sending QR to Webhook...');
+            console.log('--- NEW QR GENERATED ---');
             axios.post(PHP_API_URL, { action: 'qr_generated', qr: qr })
-                .then(() => console.log('QR sent successfully'))
-                .catch(e => console.error('Error sending QR:', e.message));
+                .then(() => console.log('QR sent to PHP'))
+                .catch(e => console.error('Webhook Error:', e.message));
         }
-        if (connection === 'open') {
+
+        if (connection === 'close') {
+            const shouldReconnect = (lastDisconnect?.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log('Connection closed. Reason:', lastDisconnect?.error, 'Should reconnect:', shouldReconnect);
+            if (shouldReconnect) {
+                connectToWhatsApp();
+            }
+        } else if (connection === 'open') {
+            console.log('--- WHATSAPP CONNECTED SUCCESSFULLY ---');
             axios.post(PHP_API_URL, { action: 'status_update', status: 'connected', number: sock.user.id })
-                .catch(e => console.error('Error sending status:', e.message));
+                .catch(e => console.error('Status Webhook Error:', e.message));
         }
     });
 
