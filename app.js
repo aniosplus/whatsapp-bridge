@@ -15,6 +15,11 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
+// Ana sayfa kontrolü için
+app.get('/', (req, res) => {
+    res.json({ status: 'running', service: 'WhatsApp Bridge', webhook_url: process.env.WEBHOOK_URL });
+});
+
 const PORT = process.env.PORT || 3000;
 const PHP_API_URL = process.env.WEBHOOK_URL || 'https://hugx.net/api/whatsapp_webhook.php';
 const SESSION_NAME = 'whatsapp_auth_session';
@@ -38,11 +43,14 @@ async function connectToWhatsApp() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
-            // QR Kod oluştuğunda PHP'ye bildir (Dosya yazmak yerine API ile gönderiyoruz çünkü Render'da dosya kalıcı değil)
-            axios.post(PHP_API_URL, { action: 'qr_generated', qr: qr }).catch(e => { });
+            console.log('Sending QR to Webhook...');
+            axios.post(PHP_API_URL, { action: 'qr_generated', qr: qr })
+                .then(() => console.log('QR sent successfully'))
+                .catch(e => console.error('Error sending QR:', e.message));
         }
         if (connection === 'open') {
-            axios.post(PHP_API_URL, { action: 'status_update', status: 'connected', number: sock.user.id }).catch(e => { });
+            axios.post(PHP_API_URL, { action: 'status_update', status: 'connected', number: sock.user.id })
+                .catch(e => console.error('Error sending status:', e.message));
         }
     });
 
